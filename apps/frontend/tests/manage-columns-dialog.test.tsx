@@ -5,7 +5,11 @@ import { ManageColumnsDialog } from '@/components/tracker/manage-columns-dialog'
 import { KanbanBoard } from '@/components/tracker/kanban-board';
 import {
   APPLICATION_STATUS_ORDER,
+  bulkDeleteApplications,
+  bulkUpdateStatus,
+  deleteApplication,
   listApplications,
+  updateApplication,
   type Application,
   type ApplicationColumns,
   type ApplicationStatus,
@@ -24,7 +28,14 @@ vi.mock('@/lib/i18n', () => ({
 
 vi.mock('@/lib/api/tracker', async () => {
   const actual = await vi.importActual<typeof import('@/lib/api/tracker')>('@/lib/api/tracker');
-  return { ...actual, listApplications: vi.fn() };
+  return {
+    ...actual,
+    listApplications: vi.fn(),
+    updateApplication: vi.fn(),
+    bulkUpdateStatus: vi.fn(),
+    deleteApplication: vi.fn(),
+    bulkDeleteApplications: vi.fn(),
+  };
 });
 
 // Wraps (does not replace) the real dialog so the board's `onToggle` can be
@@ -190,6 +201,7 @@ describe('KanbanBoard column visibility', () => {
   }
 
   beforeEach(() => {
+    vi.clearAllMocks();
     localStorage.clear();
     boardDialog.onToggle = null;
     vi.mocked(listApplications).mockResolvedValue({ columns: columnsFixture() });
@@ -221,6 +233,80 @@ describe('KanbanBoard column visibility', () => {
     fireEvent.click(switchFor('applied'));
     expect(localStorage.getItem(TRACKER_HIDDEN_STATUSES_KEY)).toBe(JSON.stringify([]));
     expect(visibleColumns()).toContain('applied');
+  });
+
+  it('hides a populated stage without changing its cards or calling write APIs', async () => {
+    const columns = columnsFixture();
+    const originalColumns = structuredClone(columns);
+    vi.mocked(listApplications).mockResolvedValue({ columns });
+    await renderBoard();
+    expect(screen.getByText('ACME')).toBeInTheDocument();
+    expect(screen.getByText('Engineer')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'tracker.manage' }));
+    fireEvent.click(switchFor('saved'));
+
+    expect(visibleColumns()).not.toContain('saved');
+    expect(screen.queryByText('ACME')).not.toBeInTheDocument();
+    expect(screen.queryByText('Engineer')).not.toBeInTheDocument();
+    expect(columns).toEqual(originalColumns);
+
+    fireEvent.click(switchFor('saved'));
+    fireEvent.click(screen.getByRole('button', { name: 'tracker.manageDialog.close' }));
+
+    expect(visibleColumns()).toContain('saved');
+    const savedColumn = document.querySelector<HTMLElement>('[data-column="saved"]');
+    expect(savedColumn).not.toBeNull();
+    expect(within(savedColumn!).getByText('ACME')).toBeInTheDocument();
+    expect(within(savedColumn!).getByText('Engineer')).toBeInTheDocument();
+    expect(columns).toEqual(originalColumns);
+    expect(listApplications).toHaveBeenCalledTimes(1);
+    expect(deleteApplication).not.toHaveBeenCalled();
+    expect(bulkDeleteApplications).not.toHaveBeenCalled();
+    expect(updateApplication).not.toHaveBeenCalled();
+    expect(bulkUpdateStatus).not.toHaveBeenCalled();
+  });
+
+  it('restores a user selection after remount and can reveal its original cards', async () => {
+    const columns = columnsFixture();
+    const originalColumns = structuredClone(columns);
+    vi.mocked(listApplications).mockResolvedValue({ columns });
+    const firstBoard = render(<KanbanBoard />);
+    await screen.findByText('ACME');
+
+    fireEvent.click(screen.getByRole('button', { name: 'tracker.manage' }));
+    fireEvent.click(switchFor('saved'));
+    fireEvent.click(switchFor('interview'));
+    fireEvent.click(screen.getByRole('button', { name: 'tracker.manageDialog.close' }));
+    expect(localStorage.getItem(TRACKER_HIDDEN_STATUSES_KEY)).toBe(
+      JSON.stringify(['saved', 'interview'])
+    );
+    firstBoard.unmount();
+
+    await renderBoard();
+
+    expect(visibleColumns()).toEqual(
+      APPLICATION_STATUS_ORDER.filter((status) => status !== 'saved' && status !== 'interview')
+    );
+    expect(screen.queryByText('ACME')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'tracker.manage' }));
+    expect(switchFor('saved')).toHaveAttribute('aria-checked', 'false');
+    expect(switchFor('interview')).toHaveAttribute('aria-checked', 'false');
+
+    fireEvent.click(switchFor('saved'));
+    fireEvent.click(screen.getByRole('button', { name: 'tracker.manageDialog.close' }));
+
+    expect(screen.getByText('ACME')).toBeInTheDocument();
+    expect(screen.getByText('Engineer')).toBeInTheDocument();
+    expect(visibleColumns()).toContain('saved');
+    expect(visibleColumns()).not.toContain('interview');
+    expect(localStorage.getItem(TRACKER_HIDDEN_STATUSES_KEY)).toBe(JSON.stringify(['interview']));
+    expect(columns).toEqual(originalColumns);
+    expect(listApplications).toHaveBeenCalledTimes(2);
+    expect(deleteApplication).not.toHaveBeenCalled();
+    expect(bulkDeleteApplications).not.toHaveBeenCalled();
+    expect(updateApplication).not.toHaveBeenCalled();
+    expect(bulkUpdateStatus).not.toHaveBeenCalled();
   });
 
   it('refuses to hide the last visible stage even when the dialog is bypassed', async () => {

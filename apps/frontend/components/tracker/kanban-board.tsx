@@ -127,8 +127,8 @@ export function KanbanBoard() {
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    // Board width is driven by the seven fixed-width columns, so we only need to
-    // (re)attach when the board appears — not on every card-list change.
+    // Visible columns determine the board width. Recalculate when they change,
+    // even if the browser emits no scroll or resize event.
     const sync = () => {
       setCanScrollLeft(el.scrollLeft > 4);
       setCanScrollRight(Math.ceil(el.scrollLeft + el.clientWidth) < el.scrollWidth - 4);
@@ -140,7 +140,7 @@ export function KanbanBoard() {
       el.removeEventListener('scroll', sync);
       window.removeEventListener('resize', sync);
     };
-  }, [loading, isEmpty]);
+  }, [loading, isEmpty, visibleStatuses]);
 
   const scrollByColumn = (direction: 1 | -1) => {
     scrollRef.current?.scrollBy({
